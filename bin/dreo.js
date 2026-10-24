@@ -3,8 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DreoClient } from '../dist/index.js';
-import { HeaterMode, FanWindType } from '../dist/index.js';
+import { DreoClient, runInteractiveMenu } from '../dist/index.js';
 
 const CONFIG_DIR = join(homedir(), '.dreo');
 const SESSION_FILE = join(CONFIG_DIR, 'session.json');
@@ -30,6 +29,8 @@ function printHelp() {
 Dreo CLI - Control Dreo Smart Devices
 
 Usage:
+  dreo                       Launch interactive terminal menu (default in TTY)
+  dreo menu                  Launch interactive terminal menu
   dreo login --user <email> --password <password> [--region <eu|us>]
   dreo list
   dreo get <device-sn>
@@ -37,6 +38,7 @@ Usage:
   dreo monitor
 
 Commands:
+  menu      Launch interactive prompt menu (default when run with no arguments)
   login     Authenticate and store session token
   list      List all devices registered to your account
   get       Display full state for a specific device
@@ -81,19 +83,40 @@ function parseArgs(args) {
 async function getClient() {
   const session = loadSession();
   if (!session || !session.token) {
-    console.error('Error: Not authenticated. Please run "dreo login --user <email> --password <password>" first.');
+    console.error('Error: Not authenticated. Please run "dreo login --user <email> --password <password>" or "dreo menu" first.');
     process.exit(1);
   }
-  const client = new DreoClient({
+  return new DreoClient({
     region: session.region || 'eu',
     token: session.token,
   });
-  return client;
 }
 
 async function main() {
   const args = process.argv.slice(2);
-  if (args.length === 0 || args.includes('-h') || args.includes('--help')) {
+
+  // If no arguments provided or explicitly requested menu
+  if (args.length === 0 || args[0] === 'menu' || args[0] === 'interactive') {
+    if (process.stdin.isTTY) {
+      const session = loadSession();
+      const client = new DreoClient({
+        region: session?.region || 'eu',
+        token: session?.token,
+      });
+
+      await runInteractiveMenu({
+        client,
+        loadSession,
+        saveSession,
+      });
+      return;
+    } else if (args.length === 0) {
+      printHelp();
+      return;
+    }
+  }
+
+  if (args.includes('-h') || args.includes('--help')) {
     printHelp();
     return;
   }
@@ -264,4 +287,3 @@ main().catch((err) => {
   console.error('Unexpected error:', err);
   process.exit(1);
 });
-

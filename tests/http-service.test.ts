@@ -5,10 +5,10 @@ import { DreoAuthenticationError, DreoNetworkError } from '../src/errors.js';
 describe('DreoHttpService', () => {
   it('correctly sets base URL depending on regional configuration', () => {
     const euService = new DreoHttpService({ region: 'eu' });
-    expect(euService.getBaseUrl()).toBe('https://app-api-eu.dreo-cloud.com');
+    expect(euService.getBaseUrl()).toBe('https://app-api-eu.dreo-tech.com');
 
     const usService = new DreoHttpService({ region: 'us' });
-    expect(usService.getBaseUrl()).toBe('https://app-api-us.dreo-cloud.com');
+    expect(usService.getBaseUrl()).toBe('https://app-api-us.dreo-tech.com');
   });
 
   it('performs successful login and stores token', async () => {
@@ -30,7 +30,7 @@ describe('DreoHttpService', () => {
     expect(auth.access_token).toBe('test_token_123');
     expect(service.getToken()).toBe('test_token_123');
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(mockFetch.mock.calls[0][0]).toBe('https://app-api-eu.dreo-cloud.com/api/oauth/login');
+    expect(mockFetch.mock.calls[0][0]).toContain('https://app-api-eu.dreo-tech.com/api/oauth/login');
   });
 
   it('throws DreoAuthenticationError on invalid credentials', async () => {

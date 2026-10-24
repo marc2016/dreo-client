@@ -1,4 +1,4 @@
-import { DREO_API_BASE_URLS, DREO_ENDPOINTS, DEFAULT_REGION, DEFAULT_TIMEOUT_MS } from '../constants.js';
+import { DREO_API_BASE_URLS, DREO_ENDPOINTS, DREO_CLIENT_CONFIG, DEFAULT_REGION, DEFAULT_TIMEOUT_MS } from '../constants.js';
 import { DreoRegion, DreoAuthResponse, DreoRawDevice } from '../types/index.js';
 import { DreoAuthenticationError, DreoNetworkError, DreoError } from '../errors.js';
 import { md5 } from '../utils/crypto.js';
@@ -44,32 +44,53 @@ export class DreoHttpService {
   }
 
   public async login(email: string, password: string): Promise<DreoAuthResponse> {
-    const url = `${this.getBaseUrl()}${DREO_ENDPOINTS.LOGIN}`;
+    const url = `${this.getBaseUrl()}${DREO_ENDPOINTS.LOGIN}?timestamp=${Date.now()}`;
     const hashedPassword = md5(password);
 
-    const payload = {
-      email,
-      password: hashedPassword,
-      grant_type: 'email-password',
-      client_id: 'dreo-app-ios',
+    const tryAuth = async (passToSend: string) => {
+      const payload = {
+        acceptLanguage: 'en',
+        client_id: DREO_CLIENT_CONFIG.CLIENT_ID,
+        client_secret: DREO_CLIENT_CONFIG.CLIENT_SECRET,
+        email,
+        encrypt: 'ciphertext',
+        grant_type: 'email-password',
+        himei: DREO_CLIENT_CONFIG.HIMEI,
+        password: passToSend,
+        scope: 'all',
+      };
+
+      return this.request<{
+        code?: number;
+        msg?: string;
+        message?: string;
+        data?: DreoAuthResponse;
+        access_token?: string;
+      }>(url, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8',
+        },
+      }, false);
     };
 
-    const response = await this.request<{
-      code?: number;
-      msg?: string;
-      message?: string;
-      data?: DreoAuthResponse;
-      access_token?: string;
-    }>(url, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    }, false);
+    let response = await tryAuth(hashedPassword);
+    let authData = response.data ?? (response.access_token ? (response as unknown as DreoAuthResponse) : undefined);
 
-    // Some versions return wrapped { code: 0, data: { access_token } }, others return raw { access_token }
-    const authData = response.data ?? (response.access_token ? (response as unknown as DreoAuthResponse) : undefined);
+    if ((!authData || !authData.access_token) && (response.code === 100021 || response.code === 100022)) {
+      // Fallback with plaintext password in case endpoint configuration accepts raw format
+      try {
+        const fallbackResponse = await tryAuth(password);
+        const fallbackData = fallbackResponse.data ?? (fallbackResponse.access_token ? (fallbackResponse as unknown as DreoAuthResponse) : undefined);
+        if (fallbackData && fallbackData.access_token) {
+          response = fallbackResponse;
+          authData = fallbackData;
+        }
+      } catch {
+        // ignore and let main error handler report the primary failure
+      }
+    }
 
     if (!authData || !authData.access_token) {
       const errorMsg = response.msg ?? response.message ?? 'Unknown authentication failure';
@@ -82,7 +103,14 @@ export class DreoHttpService {
 
   public async getDeviceList(): Promise<DreoRawDevice[]> {
     this.ensureAuthenticated();
-    const url = `${this.getBaseUrl()}${DREO_ENDPOINTS.DEVICE_LIST}`;
+    const query = new URLSearchParams({
+      acceptLanguage: 'en',
+      method: 'devices',
+      pageNo: '1',
+      pageSize: '100',
+      timestamp: Date.now().toString(),
+    });
+    const url = `${this.getBaseUrl()}/api/v2/user-device/device/list?${query.toString()}`;
 
     const response = await this.request<{
       code?: number;
@@ -105,7 +133,11 @@ export class DreoHttpService {
 
   public async getDeviceState(deviceSn: string): Promise<Record<string, any>> {
     this.ensureAuthenticated();
-    const url = `${this.getBaseUrl()}${DREO_ENDPOINTS.DEVICE_STATE}?deviceSn=${encodeURIComponent(deviceSn)}`;
+    const query = new URLSearchParams({
+      deviceSn,
+      timestamp: Date.now().toString(),
+    });
+    const url = `${this.getBaseUrl()}${DREO_ENDPOINTS.DEVICE_STATE}?${query.toString()}`;
 
     const response = await this.request<{
       code?: number;
@@ -132,7 +164,7 @@ export class DreoHttpService {
 
   public async sendDeviceControl(deviceSn: string, params: Record<string, any>): Promise<any> {
     this.ensureAuthenticated();
-    const url = `${this.getBaseUrl()}${DREO_ENDPOINTS.DEVICE_CONTROL}`;
+    const url = `${this.getBaseUrl()}${DREO_ENDPOINTS.DEVICE_CONTROL}?timestamp=${Date.now()}`;
 
     const payload = {
       deviceSn,
@@ -162,11 +194,14 @@ export class DreoHttpService {
 
     const headers: Record<string, string> = {
       Accept: 'application/json',
-      'User-Agent': 'Dreo/2.5.0 (iPhone; iOS 17.5; Scale/3.00)',
+      ua: DREO_CLIENT_CONFIG.UA,
+      lang: 'en',
+      'User-Agent': DREO_CLIENT_CONFIG.USER_AGENT,
       ...(init.headers as Record<string, string> | undefined),
     };
 
     if (requireAuth && this.token) {
+      headers['authorization'] = `Bearer ${this.token}`;
       headers['Authorization'] = `Bearer ${this.token}`;
       headers['ua-authorization'] = this.token;
     }

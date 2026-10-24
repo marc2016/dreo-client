@@ -103,7 +103,27 @@ monitor().catch(console.error);
 
 ## CLI Usage
 
-The package includes a command-line tool `dreo`:
+The package includes a powerful command-line tool `dreo`.
+
+### Interactive Mode (Menu-driven)
+
+Simply run `dreo` in your terminal without any arguments (or `dreo menu`):
+
+```bash
+dreo
+```
+
+This launches a guided, interactive terminal menu powered by `@inquirer/prompts`:
+- 📋 **List & Select Devices:** Browse your devices with real-time status, temperature, and power info.
+- ⚙️ **Device Controls:** Interactively toggle power, adjust target temperatures, switch modes (ECO / Heat levels / Fan), toggle oscillation, child lock, and timer.
+- 📡 **Live WebSocket Monitor:** Watch incoming telemetry in real-time and return to the menu with `[ENTER]`.
+- 🔑 **Account & Login:** Log in, switch between EU and US regions, or renew tokens without manual editing.
+
+---
+
+### Non-Interactive / Scripting Commands
+
+For automation scripts and CI, you can also use direct subcommands:
 
 ```bash
 # 1. Login and save credentials session (~/.dreo/session.json)

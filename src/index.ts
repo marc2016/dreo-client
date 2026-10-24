@@ -8,4 +8,5 @@ export * from './devices/dreo-heater.js';
 export * from './devices/dreo-fan.js';
 export * from './devices/factory.js';
 export * from './client.js';
+export * from './cli/interactive.js';
 

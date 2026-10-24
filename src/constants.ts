@@ -1,13 +1,21 @@
 import { DreoRegion } from './types/index.js';
 
 export const DREO_API_BASE_URLS: Record<DreoRegion, string> = {
-  eu: 'https://app-api-eu.dreo-cloud.com',
-  us: 'https://app-api-us.dreo-cloud.com',
+  eu: 'https://app-api-eu.dreo-tech.com',
+  us: 'https://app-api-us.dreo-tech.com',
 };
 
 export const DREO_WS_BASE_URLS: Record<DreoRegion, string> = {
-  eu: 'wss://wsb-eu.dreo-cloud.com/websocket',
-  us: 'wss://wsb-us.dreo-cloud.com/websocket',
+  eu: 'wss://wsb-eu.dreo-tech.com/websocket',
+  us: 'wss://wsb-us.dreo-tech.com/websocket',
+};
+
+export const DREO_CLIENT_CONFIG = {
+  CLIENT_ID: '7de37c362ee54dcf9c4561812309347a',
+  CLIENT_SECRET: '32dfa0764f25451d99f94e1693498791',
+  HIMEI: 'faede31549d649f58864093158787ec9',
+  UA: 'dreo/2.8.2',
+  USER_AGENT: 'okhttp/4.9.1',
 };
 
 export const DREO_ENDPOINTS = {
