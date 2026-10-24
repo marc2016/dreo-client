@@ -7,24 +7,34 @@ export class DreoHeater extends DreoDevice {
   }
 
   public async setTargetTemperature(temperature: number, unit: TemperatureUnit = 'celsius'): Promise<any> {
+    const fahrenheit = unit === 'fahrenheit' ? temperature : Math.round((temperature * 9) / 5 + 32);
+    const celsius = unit === 'celsius' ? temperature : Math.round(((temperature - 32) * 5) / 9);
+
     const payload: Record<string, any> = {
-      target_temp: temperature,
-      templevel: temperature,
+      ecolevel: fahrenheit,
+      target_temp: celsius,
+      templevel: celsius,
+      temp_unit: unit,
     };
-    if (unit === 'fahrenheit') {
-      payload.temp_unit = 'fahrenheit';
-    } else {
-      payload.temp_unit = 'celsius';
-    }
     return this.sendCommands(payload);
   }
 
-  public getTargetTemperature(): number | undefined {
-    return this.state.target_temp ?? this.state.templevel;
+  public getTargetTemperature(unit: TemperatureUnit = 'celsius'): number | undefined {
+    const raw = this.state.ecolevel ?? this.state.target_temp ?? this.state.templevel;
+    if (typeof raw !== 'number') return undefined;
+    if (raw > 35) {
+      return unit === 'celsius' ? Math.round(((raw - 32) * 5) / 9) : raw;
+    }
+    return unit === 'fahrenheit' ? Math.round((raw * 9) / 5 + 32) : raw;
   }
 
-  public getCurrentTemperature(): number | undefined {
-    return this.state.cur_temp ?? this.state.temperature;
+  public getCurrentTemperature(unit: TemperatureUnit = 'celsius'): number | undefined {
+    const raw = this.state.temperature ?? this.state.cur_temp;
+    if (typeof raw !== 'number') return undefined;
+    if (raw > 35) {
+      return unit === 'celsius' ? Math.round(((raw - 32) * 5) / 9) : raw;
+    }
+    return unit === 'fahrenheit' ? Math.round((raw * 9) / 5 + 32) : raw;
   }
 
   public async setMode(mode: HeaterMode, heatLevel: number = 3): Promise<any> {
@@ -36,14 +46,15 @@ export class DreoHeater extends DreoDevice {
         payload.mode_level = 4;
         break;
       case HeaterMode.Fan:
-        payload.mode = 'fan';
+        payload.mode = 'coolair';
         payload.mode_level = 0;
         break;
       case HeaterMode.Heat:
       default:
-        payload.mode = 'heat';
-        payload.mode_level = Math.max(1, Math.min(3, heatLevel));
-        payload.heat_level = payload.mode_level;
+        payload.mode = 'hotair';
+        payload.htalevel = Math.max(1, Math.min(3, heatLevel));
+        payload.mode_level = payload.htalevel;
+        payload.heat_level = payload.htalevel;
         break;
     }
 
@@ -68,12 +79,13 @@ export class DreoHeater extends DreoDevice {
   public getMode(): HeaterMode | string {
     const mode = this.state.mode;
     if (mode === 'eco' || this.state.mode_level === 4) return HeaterMode.Eco;
-    if (mode === 'fan' || this.state.mode_level === 0) return HeaterMode.Fan;
-    return HeaterMode.Heat;
+    if (mode === 'coolair' || mode === 'fan' || this.state.mode_level === 0) return HeaterMode.Fan;
+    if (mode === 'hotair' || mode === 'heat') return HeaterMode.Heat;
+    return mode ?? HeaterMode.Heat;
   }
 
   public getHeatLevel(): number {
-    return this.state.heat_level ?? this.state.mode_level ?? 1;
+    return this.state.htalevel ?? this.state.heat_level ?? this.state.mode_level ?? 1;
   }
 
   public async setOscillation(oscillate: boolean): Promise<any> {
@@ -89,13 +101,30 @@ export class DreoHeater extends DreoDevice {
 
   public async setChildLock(locked: boolean): Promise<any> {
     return this.sendCommands({
+      childlockon: locked,
       child_lock: locked,
       childlock: locked,
     });
   }
 
   public isChildLocked(): boolean {
-    return Boolean(this.state.child_lock ?? this.state.childlock);
+    return Boolean(this.state.childlockon ?? this.state.child_lock ?? this.state.childlock);
+  }
+
+  public async setLight(on: boolean): Promise<any> {
+    return this.sendCommands({ lighton: on });
+  }
+
+  public isLightOn(): boolean {
+    return Boolean(this.state.lighton);
+  }
+
+  public async setMute(muted: boolean): Promise<any> {
+    return this.sendCommands({ muteon: muted });
+  }
+
+  public isMuted(): boolean {
+    return Boolean(this.state.muteon);
   }
 
   public async setTimer(hours: number): Promise<any> {

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
 import { DreoRegion } from '../types/index.js';
-import { DREO_WS_BASE_URLS, DEFAULT_REGION, DEFAULT_HEARTBEAT_MS } from '../constants.js';
+import { DREO_WS_BASE_URLS, DEFAULT_REGION, DEFAULT_HEARTBEAT_MS, DREO_CLIENT_CONFIG } from '../constants.js';
 import { DreoError } from '../errors.js';
 
 export interface WebSocketClientOptions {
@@ -72,12 +72,14 @@ export class DreoWebSocketClient extends EventEmitter {
     this.isConnecting = true;
 
     const baseUrl = DREO_WS_BASE_URLS[this.region] ?? DREO_WS_BASE_URLS.eu;
-    const url = `${baseUrl}?accessToken=${encodeURIComponent(this.token)}`;
+    const timestamp = Date.now();
+    const url = `${baseUrl}?accessToken=${encodeURIComponent(this.token)}&timestamp=${timestamp}`;
 
     try {
       this.ws = new this.WebSocketClass(url, {
         headers: {
-          'User-Agent': 'Dreo/2.5.0 (iPhone; iOS 17.5; Scale/3.00)',
+          'User-Agent': DREO_CLIENT_CONFIG.USER_AGENT,
+          ua: DREO_CLIENT_CONFIG.UA,
         },
       });
 
@@ -110,8 +112,9 @@ export class DreoWebSocketClient extends EventEmitter {
     }
 
     const payload = {
-      method: 'control',
+      devicesn: deviceSn,
       deviceSn,
+      method: 'control',
       params,
       timestamp: Date.now(),
     };
@@ -181,27 +184,13 @@ export class DreoWebSocketClient extends EventEmitter {
   private parseDeviceUpdate(msg: any): DreoDeviceUpdateEvent | null {
     if (!msg || typeof msg !== 'object') return null;
 
-    // Pattern 1: { method: 'devices-report', data: { deviceSn, reported } }
-    if (msg.data && msg.data.deviceSn && (msg.data.reported || msg.data.state)) {
-      return {
-        deviceSn: msg.data.deviceSn,
-        reported: msg.data.reported ?? msg.data.state,
-      };
-    }
+    const sn = msg.devicesn ?? msg.deviceSn ?? (msg.data && (msg.data.devicesn ?? msg.data.deviceSn));
+    const reported = msg.reported ?? msg.params ?? msg.state ?? (msg.data && (msg.data.reported ?? msg.data.state));
 
-    // Pattern 2: { deviceSn: '...', reported: { ... } }
-    if (msg.deviceSn && (msg.reported || msg.state || msg.params)) {
+    if (sn && reported) {
       return {
-        deviceSn: msg.deviceSn,
-        reported: msg.reported ?? msg.state ?? msg.params,
-      };
-    }
-
-    // Pattern 3: { method: 'control-reply', deviceSn: '...', params: { ... } }
-    if (msg.method === 'control-reply' && msg.deviceSn && msg.params) {
-      return {
-        deviceSn: msg.deviceSn,
-        reported: msg.params,
+        deviceSn: sn,
+        reported,
       };
     }
 

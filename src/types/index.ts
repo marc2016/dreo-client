@@ -25,7 +25,8 @@ export interface DreoAuthResponse {
 }
 
 export interface DreoRawDevice {
-  deviceSn: string;
+  deviceSn?: string;
+  sn?: string;
   model: string;
   deviceName: string;
   brand?: string;

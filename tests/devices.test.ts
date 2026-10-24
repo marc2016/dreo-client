@@ -49,6 +49,7 @@ describe('Device Hierarchy & Controls', () => {
 
     await heater.setTargetTemperature(23);
     expect(transport).toHaveBeenCalledWith({
+      ecolevel: 73,
       target_temp: 23,
       templevel: 23,
       temp_unit: 'celsius',
@@ -57,7 +58,8 @@ describe('Device Hierarchy & Controls', () => {
 
     await heater.setHeatLevel(2);
     expect(transport).toHaveBeenCalledWith({
-      mode: 'heat',
+      mode: 'hotair',
+      htalevel: 2,
       mode_level: 2,
       heat_level: 2,
     });
@@ -72,6 +74,7 @@ describe('Device Hierarchy & Controls', () => {
 
     await heater.setChildLock(true);
     expect(transport).toHaveBeenCalledWith({
+      childlockon: true,
       child_lock: true,
       childlock: true,
     });

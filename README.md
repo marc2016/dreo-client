@@ -129,17 +129,23 @@ For automation scripts and CI, you can also use direct subcommands:
 # 1. Login and save credentials session (~/.dreo/session.json)
 dreo login --user my-account@example.com --password my-secret-pass --region eu
 
-# 2. List all devices
+# 2. Inspect session validity and account status
+dreo status   # or: dreo whoami
+
+# 3. Log out and clear local credentials
+dreo logout
+
+# 4. List all devices
 dreo list
 
-# 3. Inspect full state of a device
+# 5. Inspect full state of a device
 dreo get <device-sn>
 
-# 4. Control devices
+# 6. Control devices
 dreo set <device-sn> --power on --temp 21 --mode eco --oscillate on
 dreo set <device-sn> --power off
 
-# 5. Live WebSocket monitor
+# 7. Live WebSocket monitor
 dreo monitor
 ```
 

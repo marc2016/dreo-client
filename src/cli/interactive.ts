@@ -4,25 +4,27 @@ import { DreoDevice } from '../devices/dreo-device.js';
 import { DreoHeater } from '../devices/dreo-heater.js';
 import { DreoFan } from '../devices/dreo-fan.js';
 import { DreoRegion, HeaterMode, FanWindType } from '../types/index.js';
+import { StoredSession, isSessionExpired, formatSessionInfo, clearSession as defaultClearSession } from './session.js';
 
-export interface SessionData {
-  token: string;
-  region: DreoRegion;
-  email?: string;
-}
+export type SessionData = StoredSession;
 
 export interface InteractiveMenuOptions {
   client: DreoClient;
   loadSession: () => SessionData | null;
   saveSession: (data: SessionData) => void;
+  clearSession?: () => boolean;
 }
 
 export async function runInteractiveMenu(options: InteractiveMenuOptions): Promise<void> {
-  const { client, loadSession, saveSession } = options;
+  const { client, loadSession, saveSession, clearSession = defaultClearSession } = options;
 
   let session = loadSession();
-  if (!session || !session.token) {
-    console.log('\nWillkommen bei Dreo CLI! Du bist noch nicht angemeldet.');
+  if (!session || !session.token || isSessionExpired(session)) {
+    if (session && isSessionExpired(session)) {
+      console.log('\n⚠️ Deine vorherige Session ist abgelaufen. Bitte erneut anmelden:');
+    } else {
+      console.log('\nWillkommen bei Dreo CLI! Du bist noch nicht angemeldet.');
+    }
     const loggedIn = await promptLogin(client, saveSession);
     if (!loggedIn) {
       console.log('Abbruch.');
@@ -39,7 +41,9 @@ export async function runInteractiveMenu(options: InteractiveMenuOptions): Promi
       choices: [
         { name: '📋 Geräte anzeigen & steuern', value: 'devices' },
         { name: '📡 Live WebSocket Monitor starten', value: 'monitor' },
-        { name: '🔑 Account / Neu anmelden', value: 'login' },
+        { name: 'ℹ️  Session- & Account-Status anzeigen', value: 'status' },
+        { name: '🔑 Account wechseln / Neu anmelden', value: 'login' },
+        { name: '🔓 Abmelden (Logout)', value: 'logout' },
         { name: '🚪 Beenden', value: 'exit' },
       ],
     });
@@ -51,9 +55,35 @@ export async function runInteractiveMenu(options: InteractiveMenuOptions): Promi
       case 'monitor':
         await handleMonitor(client);
         break;
+      case 'status': {
+        console.log('\n--- Dreo Session Status ---');
+        console.log(formatSessionInfo(loadSession()));
+        break;
+      }
       case 'login':
         await promptLogin(client, saveSession);
         break;
+      case 'logout': {
+        const sure = await confirm({
+          message: 'Möchtest du dich wirklich abmelden?',
+          default: false,
+        });
+        if (sure) {
+          clearSession();
+          console.log('✅ Erfolgreich abgemeldet.');
+          const reLogin = await confirm({
+            message: 'Möchtest du dich jetzt mit einem anderen Account anmelden?',
+            default: true,
+          });
+          if (reLogin) {
+            await promptLogin(client, saveSession);
+          } else {
+            running = false;
+            console.log('Tschüss!');
+          }
+        }
+        break;
+      }
       case 'exit':
         running = false;
         console.log('Tschüss!');
@@ -88,10 +118,16 @@ async function promptLogin(client: DreoClient, saveSession: (data: SessionData) 
 
   try {
     const auth = await client.login(email, pass);
+    const expiresAt = auth.expires_in
+      ? new Date(Date.now() + auth.expires_in * 1000).toISOString()
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
     saveSession({
       token: auth.access_token,
       region,
       email,
+      createdAt: new Date().toISOString(),
+      expiresAt,
     });
     console.log('✅ Erfolgreich angemeldet und Session gespeichert!');
     return true;
@@ -397,7 +433,12 @@ async function handleMonitor(client: DreoClient): Promise<void> {
     console.log(`\n[${time}] 🔔 Update von ${dev.name} (${dev.sn}):`, diff);
   };
 
+  const onError = (err: Error) => {
+    console.warn(`\n⚠️ WebSocket-Hinweis: ${err.message}`);
+  };
+
   client.on('deviceUpdate', onUpdate);
+  client.on('error', onError);
 
   console.log('✅ Live-Monitor aktiv!');
   await input({
@@ -405,6 +446,7 @@ async function handleMonitor(client: DreoClient): Promise<void> {
   });
 
   client.off('deviceUpdate', onUpdate);
+  client.off('error', onError);
   client.stopMonitoring();
   console.log('Monitor beendet.');
 }

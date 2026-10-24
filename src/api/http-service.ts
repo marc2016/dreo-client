@@ -150,6 +150,14 @@ export class DreoHttpService {
       method: 'GET',
     });
 
+    const rawData = (response.data ?? response) as Record<string, any>;
+    if (rawData && rawData.mixed && typeof rawData.mixed === 'object') {
+      const unwrapped: Record<string, any> = {};
+      for (const [k, v] of Object.entries(rawData.mixed)) {
+        unwrapped[k] = (v && typeof v === 'object' && 'state' in v) ? (v as any).state : v;
+      }
+      return unwrapped;
+    }
     if (response.data && 'state' in response.data && response.data.state) {
       return response.data.state;
     }

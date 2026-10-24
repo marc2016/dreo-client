@@ -72,14 +72,25 @@ export class DreoClient extends EventEmitter {
     const rawDevices = await this.httpService.getDeviceList();
 
     for (const raw of rawDevices) {
-      const existing = this.devices.get(raw.deviceSn);
-      if (existing) {
-        if (raw.reported || raw.state) {
-          existing.updateState(raw.reported ?? raw.state ?? {});
-        }
+      const sn = raw.sn || raw.deviceSn || '';
+      let device = this.devices.get(sn);
+      if (!device) {
+        device = createDevice(raw, (params) => this.dispatchDeviceCommand(sn, params));
+        this.devices.set(sn, device);
+      }
+
+      // If state present on raw, use directly; otherwise fetch from Cloud API
+      if (raw.reported || raw.state) {
+        device.updateState(raw.reported ?? raw.state ?? {});
       } else {
-        const device = createDevice(raw, (params) => this.dispatchDeviceCommand(raw.deviceSn, params));
-        this.devices.set(raw.deviceSn, device);
+        try {
+          const state = await this.httpService.getDeviceState(sn);
+          if (state && Object.keys(state).length > 0) {
+            device.updateState(state);
+          }
+        } catch {
+          // ignore
+        }
       }
     }
 
@@ -114,11 +125,54 @@ export class DreoClient extends EventEmitter {
   }
 
   private async dispatchDeviceCommand(deviceSn: string, params: Record<string, any>): Promise<any> {
-    // If WebSocket is active, send via WebSocket
     if (this.wsClient.isConnected()) {
       return this.wsClient.sendCommand(deviceSn, params);
     }
-    // Otherwise fallback to HTTP POST control
+
+    // Attempt WebSocket auto-connect if not connected
+    const token = this.getToken();
+    if (token && this.options.autoReconnect !== false) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            cleanup();
+            resolve();
+          }, 2000);
+
+          const onOpen = () => {
+            cleanup();
+            resolve();
+          };
+          const onError = () => {
+            cleanup();
+            resolve();
+          };
+          const cleanup = () => {
+            clearTimeout(timeout);
+            this.wsClient.off('open', onOpen);
+            this.wsClient.off('error', onError);
+          };
+
+          this.wsClient.once('open', onOpen);
+          this.wsClient.once('error', onError);
+
+          try {
+            this.wsClient.connect();
+          } catch {
+            cleanup();
+            resolve();
+          }
+        });
+      } catch {
+        // fallback to http
+      }
+    }
+
+    if (this.wsClient.isConnected()) {
+      return this.wsClient.sendCommand(deviceSn, params);
+    }
+
+    // Fallback to HTTP POST control
     return this.httpService.sendDeviceControl(deviceSn, params);
   }
 
@@ -132,7 +186,9 @@ export class DreoClient extends EventEmitter {
     });
 
     this.wsClient.on('error', (err) => {
-      this.emit('error', err);
+      if (this.listenerCount('error') > 0) {
+        this.emit('error', err);
+      }
     });
   }
 }

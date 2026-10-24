@@ -15,7 +15,7 @@ export class DreoDevice extends EventEmitter {
   constructor(rawDevice: DreoRawDevice, commandTransport: CommandTransportFn) {
     super();
     this.rawDevice = rawDevice;
-    this.sn = rawDevice.deviceSn;
+    this.sn = rawDevice.sn ?? rawDevice.deviceSn ?? '';
     this.model = rawDevice.model;
     this.name = rawDevice.deviceName;
     this.online = rawDevice.online ?? rawDevice.connected ?? true;

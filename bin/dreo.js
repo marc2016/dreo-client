@@ -1,28 +1,14 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { DreoClient, runInteractiveMenu } from '../dist/index.js';
-
-const CONFIG_DIR = join(homedir(), '.dreo');
-const SESSION_FILE = join(CONFIG_DIR, 'session.json');
-
-function loadSession() {
-  if (!existsSync(SESSION_FILE)) return null;
-  try {
-    return JSON.parse(readFileSync(SESSION_FILE, 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-function saveSession(data) {
-  if (!existsSync(CONFIG_DIR)) {
-    mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-  }
-  writeFileSync(SESSION_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
-}
+import {
+  DreoClient,
+  runInteractiveMenu,
+  loadSession,
+  saveSession,
+  clearSession,
+  isSessionExpired,
+  formatSessionInfo,
+} from '../dist/index.js';
 
 function printHelp() {
   console.log(`
@@ -32,6 +18,8 @@ Usage:
   dreo                       Launch interactive terminal menu (default in TTY)
   dreo menu                  Launch interactive terminal menu
   dreo login --user <email> --password <password> [--region <eu|us>]
+  dreo status / dreo whoami  Display current session and account status
+  dreo logout                Clear local session credentials
   dreo list
   dreo get <device-sn>
   dreo set <device-sn> [options]
@@ -40,6 +28,9 @@ Usage:
 Commands:
   menu      Launch interactive prompt menu (default when run with no arguments)
   login     Authenticate and store session token
+  status    Show active session and authentication status
+  whoami    Alias for 'status'
+  logout    Log out and remove local credentials
   list      List all devices registered to your account
   get       Display full state for a specific device
   set       Control a device
@@ -86,6 +77,12 @@ async function getClient() {
     console.error('Error: Not authenticated. Please run "dreo login --user <email> --password <password>" or "dreo menu" first.');
     process.exit(1);
   }
+
+  if (isSessionExpired(session)) {
+    console.error('Error: Session has expired. Please run "dreo login" or "dreo menu" to re-authenticate.');
+    process.exit(1);
+  }
+
   return new DreoClient({
     region: session.region || 'eu',
     token: session.token,
@@ -125,6 +122,23 @@ async function main() {
   const command = parsed._[0];
 
   switch (command) {
+    case 'status':
+    case 'whoami': {
+      const session = loadSession();
+      console.log('\n--- Dreo Session Status ---');
+      console.log(formatSessionInfo(session));
+      break;
+    }
+
+    case 'logout': {
+      if (clearSession()) {
+        console.log('Successfully logged out. Session file ~/.dreo/session.json removed.');
+      } else {
+        console.log('No active session found. You are already logged out.');
+      }
+      break;
+    }
+
     case 'login': {
       const email = parsed.user || parsed.email;
       const password = parsed.password || parsed.pass;
@@ -139,7 +153,17 @@ async function main() {
       const client = new DreoClient({ region });
       try {
         const auth = await client.login(email, password);
-        saveSession({ token: auth.access_token, region, email });
+        const expiresAt = auth.expires_in
+          ? new Date(Date.now() + auth.expires_in * 1000).toISOString()
+          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+        saveSession({
+          token: auth.access_token,
+          region,
+          email,
+          createdAt: new Date().toISOString(),
+          expiresAt,
+        });
         console.log('Login successful! Session saved to ~/.dreo/session.json');
       } catch (err) {
         console.error('Login failed:', err.message);
