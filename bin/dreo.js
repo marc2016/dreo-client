@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 
+import { DreoClient } from '../dist/index.js';
 import {
-  DreoClient,
   runInteractiveMenu,
   loadSession,
   saveSession,
   clearSession,
   isSessionExpired,
   formatSessionInfo,
-} from '../dist/index.js';
+  parseControlFlags,
+  applyControlPlan,
+  CliUsageError,
+} from '../dist/cli.js';
 
 function printHelp() {
   console.log(`
@@ -38,13 +41,16 @@ Commands:
 
 Options for 'set':
   --power <on|off>          Turn device on or off
-  --temp <number>           Set target temperature (for heaters)
-  --mode <heat|eco|fan>     Set mode (for heaters)
-  --level <1|2|3>           Set heat level (for heaters)
-  --speed <1-12>            Set fan speed (for fans)
-  --oscillate <on|off>      Toggle oscillation
-  --child-lock <on|off>     Toggle child lock
-  --timer <hours>           Set shutdown timer (0-12 hours)
+  --temp <5-35>             Set target temperature in °C (heaters)
+  --mode <heat|eco|fan>     Set mode (heaters)
+  --level <1|2|3>           Set heat level (heaters; with --mode only for heat)
+  --speed <1-12>            Set fan speed (fans)
+  --oscillate <on|off>      Toggle oscillation (heaters, fans)
+  --child-lock <on|off>     Toggle child lock (heaters)
+  --timer <0-12>            Set shutdown timer in hours (heaters)
+
+  Flags are applied in this order: power, mode/level, temp, speed,
+  oscillate, child-lock, timer.
 
 General Options:
   -h, --help                Show this help message
@@ -194,7 +200,9 @@ async function main() {
         );
       } catch (err) {
         console.error('Failed to list devices:', err.message);
-        process.exit(1);
+        process.exitCode = 1;
+      } finally {
+        client.close();
       }
       break;
     }
@@ -207,16 +215,21 @@ async function main() {
       }
 
       const client = await getClient();
-      await client.getDevices();
-      const device = client.getDeviceBySn(sn);
-      if (!device) {
-        console.error(`Device with SN ${sn} not found.`);
-        process.exit(1);
-      }
+      try {
+        await client.getDevices();
+        const device = client.getDeviceBySn(sn);
+        if (!device) {
+          console.error(`Device with SN ${sn} not found.`);
+          process.exitCode = 1;
+          break;
+        }
 
-      console.log(`Device: ${device.name} (${device.model})`);
-      console.log('Current State:');
-      console.log(JSON.stringify(device.state, null, 2));
+        console.log(`Device: ${device.name} (${device.model})`);
+        console.log('Current State:');
+        console.log(JSON.stringify(device.state, null, 2));
+      } finally {
+        client.close();
+      }
       break;
     }
 
@@ -227,59 +240,38 @@ async function main() {
         process.exit(1);
       }
 
-      const client = await getClient();
-      await client.getDevices();
-      const device = client.getDeviceBySn(sn);
-      if (!device) {
-        console.error(`Device with SN ${sn} not found.`);
+      let plan;
+      try {
+        plan = parseControlFlags(parsed);
+      } catch (err) {
+        console.error(`Error: ${err.message}`);
         process.exit(1);
       }
 
-      const commands = {};
-      if (parsed.power) {
-        commands.poweron = parsed.power === 'on' || parsed.power === 'true';
-      }
-      if (parsed.temp) {
-        commands.target_temp = Number(parsed.temp);
-        commands.templevel = Number(parsed.temp);
-      }
-      if (parsed.mode) {
-        commands.mode = parsed.mode;
-      }
-      if (parsed.level) {
-        commands.heat_level = Number(parsed.level);
-        commands.mode_level = Number(parsed.level);
-      }
-      if (parsed.speed) {
-        commands.windlevel = Number(parsed.speed);
-        commands.wind_level = Number(parsed.speed);
-      }
-      if (parsed.oscillate) {
-        const osc = parsed.oscillate === 'on' || parsed.oscillate === 'true';
-        commands.horoshake = osc;
-        commands.oscillation = osc;
-      }
-      if (parsed['child-lock']) {
-        const cl = parsed['child-lock'] === 'on' || parsed['child-lock'] === 'true';
-        commands.child_lock = cl;
-        commands.childlock = cl;
-      }
-      if (parsed.timer) {
-        commands.timer = Number(parsed.timer);
-      }
-
-      if (Object.keys(commands).length === 0) {
+      if (Object.keys(plan).length === 0) {
         console.log('No control parameters specified. Run with -h for help.');
         return;
       }
 
-      console.log(`Sending commands to ${device.name} (${sn}):`, commands);
+      const client = await getClient();
       try {
-        await device.sendCommands(commands);
+        await client.getDevices();
+        const device = client.getDeviceBySn(sn);
+        if (!device) {
+          console.error(`Device with SN ${sn} not found.`);
+          process.exitCode = 1;
+          break;
+        }
+
+        console.log(`Sending commands to ${device.name} (${sn}):`, plan);
+        await applyControlPlan(device, plan);
         console.log('Success! Device updated.');
       } catch (err) {
-        console.error('Failed to update device:', err.message);
-        process.exit(1);
+        const prefix = err instanceof CliUsageError ? 'Error:' : 'Failed to update device:';
+        console.error(prefix, err.message);
+        process.exitCode = 1;
+      } finally {
+        client.close();
       }
       break;
     }
@@ -287,6 +279,11 @@ async function main() {
     case 'monitor': {
       const client = await getClient();
       console.log('Connecting to Dreo WebSocket stream (press Ctrl+C to exit)...');
+      process.once('SIGINT', () => {
+        client.close();
+        console.log('\nMonitor stopped.');
+        process.exit(0);
+      });
       await client.startMonitoring();
 
       client.on('deviceUpdate', (device, diff) => {

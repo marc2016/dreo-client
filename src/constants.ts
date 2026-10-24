@@ -20,7 +20,7 @@ export const DREO_CLIENT_CONFIG = {
 
 export const DREO_ENDPOINTS = {
   LOGIN: '/api/oauth/login',
-  DEVICE_LIST: '/api/user-device/device/list',
+  DEVICE_LIST: '/api/v2/user-device/device/list',
   DEVICE_STATE: '/api/user-device/device/state',
   DEVICE_CONTROL: '/api/user-device/device/control',
 };
@@ -28,4 +28,5 @@ export const DREO_ENDPOINTS = {
 export const DEFAULT_REGION: DreoRegion = 'eu';
 export const DEFAULT_TIMEOUT_MS = 10_000;
 export const DEFAULT_HEARTBEAT_MS = 25_000;
+export const DEFAULT_COMMAND_CONNECTION_IDLE_MS = 5_000;
 

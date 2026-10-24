@@ -8,7 +8,7 @@ Inspired by modular clients like [`panasonic-comfort-cloud-client`](https://gith
 
 ## Features
 
-- **Typed & Modern:** Written in TypeScript with dual ESM and CommonJS support (`dist/index.js` and `dist/index.cjs`) including `.d.ts` definitions.
+- **Typed & Modern:** Written in TypeScript with dual ESM and CommonJS support (`dist/index.js` and `dist/index.cjs`) including `.d.ts` definitions. CLI helpers live in a separate `dreo-client/cli` entry point, so the library itself does not load any terminal prompt dependencies.
 - **Hybrid Device Hierarchy:**
   - `DreoHeater`: Specialized class with thermostat controls, heat/eco/fan modes, oscillation, timer, and child lock (supports **Dreo Atom 316 / DR-HSH series**).
   - `DreoFan`: Specialized class with speed levels, vertical/horizontal oscillation, and wind modes (supports **DR-HTF / DR-HCF / DR-HPF series**).
@@ -65,10 +65,15 @@ async function main() {
     await heater.setMode(HeaterMode.Eco);
     await heater.setOscillation(true);
   }
+
+  // Release connections so the process can exit right away
+  client.close();
 }
 
 main().catch(console.error);
 ```
+
+> Device commands are delivered over WebSocket when possible. If monitoring is not running, the client opens a short-lived connection for them, which closes automatically after `commandConnectionIdleMs` (default 5 s) without further commands. Call `client.close()` to release it immediately.
 
 ---
 
@@ -91,7 +96,7 @@ async function monitor() {
 
   // Stop monitoring when shutting down
   process.on('SIGINT', () => {
-    client.stopMonitoring();
+    client.close();
     process.exit();
   });
 }
@@ -149,25 +154,28 @@ dreo set <device-sn> --power off
 dreo monitor
 ```
 
+`dreo set` validates all flags before sending anything and applies them through the device's typed controls in a fixed order: `--power`, `--mode`/`--level`, `--temp`, `--speed`, `--oscillate`, `--child-lock`, `--timer`. Switch flags take `on` or `off`. Flags that the device type does not support (for example `--speed` on a heater or `--timer` on a fan) are rejected with a non-zero exit code.
+
 ---
 
 ## API Reference
 
 ### `DreoClient`
-- `new DreoClient(options)`: `options` supports `region ('eu' | 'us')`, `email`, `password`, `token`, `requestTimeoutMs`, `heartbeatIntervalMs`.
+- `new DreoClient(options)`: `options` supports `region ('eu' | 'us')`, `email`, `password`, `token`, `requestTimeoutMs`, `heartbeatIntervalMs`, `autoReconnect`, `commandConnectionIdleMs`.
 - `login(email, password)`: Authenticates against the Dreo Cloud and acquires an access token.
-- `setToken(token)`: Sets an existing bearer token directly.
+- `setToken(token)` / `setRegion(region)`: Change token or region; an open WebSocket reconnects with the new settings.
 - `getDevices(refresh?: boolean)`: Retrieves list of instantiated device models (`DreoHeater`, `DreoFan`, or `DreoDevice`).
 - `getDeviceBySn(sn)`: Lookup device by serial number.
 - `startMonitoring()`: Connects persistent WebSocket for live event streaming.
 - `stopMonitoring()`: Closes WebSocket and stops reconnect/heartbeat timers.
+- `close()`: Releases all connections and timers (monitoring and command connections) so the process can exit.
 - Events:
   - `'deviceUpdate'`: `(device: DreoDevice, diff: Record<string, any>) => void`
   - `'error'`: `(err: Error) => void`
 
 ### `DreoHeater` (extends `DreoDevice`)
 - `setPower(on: boolean)`: Toggle power on/off.
-- `setTargetTemperature(temp: number, unit?: 'celsius' | 'fahrenheit')`: Adjust thermostat setpoint.
+- `setTargetTemperature(temp: number, unit?: 'celsius' | 'fahrenheit')`: Adjust thermostat setpoint (5–35 °C / 41–95 °F; other values reject with `DreoCommandError`).
 - `getTargetTemperature()`: Returns setpoint temperature.
 - `getCurrentTemperature()`: Returns ambient temperature sensor reading.
 - `setMode(mode: HeaterMode, level?: number)`: Set mode (`HeaterMode.Heat`, `HeaterMode.Eco`, `HeaterMode.Fan`).
@@ -192,6 +200,23 @@ dreo monitor
 - `state`: Current raw state dictionary.
 - `sendCommand(key, value)` / `sendCommands(params)`: Send raw command parameters (transparently routes via active WebSocket or HTTP).
 - `on('change', (diff) => ...)`: Event fired when this device's attributes change.
+
+### Errors
+All errors extend `DreoError`:
+- `DreoAuthenticationError`: Login failed or the cloud answered with HTTP 401/403.
+- `DreoApiError`: The cloud answered with a non-zero `code` (e.g. expired token); `code` holds the cloud error code.
+- `DreoCommandError`: A device command was rejected by the cloud or failed validation.
+- `DreoNetworkError`: Timeout or network failure.
+
+### CLI helpers (`dreo-client/cli`)
+```typescript
+import { runInteractiveMenu, loadSession, saveSession, parseControlFlags, applyControlPlan } from 'dreo-client/cli';
+```
+- `runInteractiveMenu({ client, loadSession, saveSession })`: The interactive terminal menu (closes the client when it ends).
+- `loadSession` / `saveSession` / `clearSession` / `isSessionExpired` / `formatSessionInfo`: Session file helpers for `~/.dreo/session.json`.
+- `parseControlFlags(flags)` / `applyControlPlan(device, plan)`: The validation and mapping used by `dreo set`.
+
+> **Upgrading from 0.1.x:** These helpers were previously exported from `dreo-client` and must now be imported from `dreo-client/cli`.
 
 ---
 

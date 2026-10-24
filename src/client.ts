@@ -4,13 +4,15 @@ import { DreoHttpService } from './api/http-service.js';
 import { DreoWebSocketClient, DreoDeviceUpdateEvent } from './api/websocket-client.js';
 import { DreoDevice } from './devices/dreo-device.js';
 import { createDevice } from './devices/factory.js';
-import { DEFAULT_REGION } from './constants.js';
+import { DEFAULT_REGION, DEFAULT_COMMAND_CONNECTION_IDLE_MS } from './constants.js';
 
 export class DreoClient extends EventEmitter {
   public readonly httpService: DreoHttpService;
   public readonly wsClient: DreoWebSocketClient;
   private devices = new Map<string, DreoDevice>();
   private options: DreoClientOptions;
+  private monitoringRequested = false;
+  private commandIdleTimer: NodeJS.Timeout | null = null;
 
   constructor(options: DreoClientOptions = {}) {
     super();
@@ -72,7 +74,11 @@ export class DreoClient extends EventEmitter {
     const rawDevices = await this.httpService.getDeviceList();
 
     for (const raw of rawDevices) {
-      const sn = raw.sn || raw.deviceSn || '';
+      const sn = raw.sn || raw.deviceSn;
+      if (!sn) {
+        // Devices without serial number cannot be addressed by commands or live updates
+        continue;
+      }
       let device = this.devices.get(sn);
       if (!device) {
         device = createDevice(raw, (params) => this.dispatchDeviceCommand(sn, params));
@@ -111,13 +117,31 @@ export class DreoClient extends EventEmitter {
       await this.getDevices();
     }
 
-    this.wsClient.connect();
+    const reconnect = this.options.autoReconnect ?? true;
+    this.monitoringRequested = true;
+    this.clearCommandIdleTimer();
+    // Adopts a connection that was opened for commands instead of opening a second one
+    this.wsClient.connect({ reconnect });
+    this.wsClient.setReconnectEnabled(reconnect);
     this.emit('monitoringStarted');
   }
 
   public stopMonitoring(): void {
+    this.monitoringRequested = false;
+    this.clearCommandIdleTimer();
     this.wsClient.disconnect();
     this.emit('monitoringStopped');
+  }
+
+  /** Releases all connections and timers so the host process can exit. */
+  public close(): void {
+    const wasMonitoring = this.monitoringRequested;
+    this.monitoringRequested = false;
+    this.clearCommandIdleTimer();
+    this.wsClient.disconnect();
+    if (wasMonitoring) {
+      this.emit('monitoringStopped');
+    }
   }
 
   public isMonitoring(): boolean {
@@ -126,7 +150,7 @@ export class DreoClient extends EventEmitter {
 
   private async dispatchDeviceCommand(deviceSn: string, params: Record<string, any>): Promise<any> {
     if (this.wsClient.isConnected()) {
-      return this.wsClient.sendCommand(deviceSn, params);
+      return this.sendOverWebSocket(deviceSn, params);
     }
 
     // Attempt WebSocket auto-connect if not connected
@@ -157,7 +181,8 @@ export class DreoClient extends EventEmitter {
           this.wsClient.once('error', onError);
 
           try {
-            this.wsClient.connect();
+            // Connections opened only for commands are short-lived and never reconnect
+            this.wsClient.connect({ reconnect: this.monitoringRequested });
           } catch {
             cleanup();
             resolve();
@@ -169,11 +194,42 @@ export class DreoClient extends EventEmitter {
     }
 
     if (this.wsClient.isConnected()) {
-      return this.wsClient.sendCommand(deviceSn, params);
+      return this.sendOverWebSocket(deviceSn, params);
+    }
+
+    if (!this.monitoringRequested) {
+      // Drop a connection attempt that did not open in time
+      this.wsClient.disconnect();
     }
 
     // Fallback to HTTP POST control
     return this.httpService.sendDeviceControl(deviceSn, params);
+  }
+
+  private async sendOverWebSocket(deviceSn: string, params: Record<string, any>): Promise<void> {
+    if (!this.monitoringRequested) {
+      this.armCommandIdleTimer();
+    }
+    return this.wsClient.sendCommand(deviceSn, params);
+  }
+
+  private armCommandIdleTimer(): void {
+    this.clearCommandIdleTimer();
+    const idleMs = this.options.commandConnectionIdleMs ?? DEFAULT_COMMAND_CONNECTION_IDLE_MS;
+    this.commandIdleTimer = setTimeout(() => {
+      this.commandIdleTimer = null;
+      if (!this.monitoringRequested) {
+        this.wsClient.disconnect();
+      }
+    }, idleMs);
+    this.commandIdleTimer.unref?.();
+  }
+
+  private clearCommandIdleTimer(): void {
+    if (this.commandIdleTimer) {
+      clearTimeout(this.commandIdleTimer);
+      this.commandIdleTimer = null;
+    }
   }
 
   private setupWebSocketListeners(): void {

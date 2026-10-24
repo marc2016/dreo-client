@@ -4,6 +4,7 @@ import { DreoHeater } from '../src/devices/dreo-heater.js';
 import { DreoFan } from '../src/devices/dreo-fan.js';
 import { createDevice } from '../src/devices/factory.js';
 import { HeaterMode, FanWindType } from '../src/types/index.js';
+import { DreoCommandError } from '../src/errors.js';
 
 describe('Device Hierarchy & Controls', () => {
   it('DreoDevice handles state diffs and emits change events', async () => {
@@ -153,5 +154,25 @@ describe('Device Hierarchy & Controls', () => {
     expect(genericDevice).not.toBeInstanceOf(DreoHeater);
     expect(genericDevice).not.toBeInstanceOf(DreoFan);
   });
-});
 
+  it('DreoHeater validates the target temperature range before dispatching', async () => {
+    const transport = vi.fn().mockResolvedValue({ success: true });
+    const heater = new DreoHeater(
+      { deviceSn: 'HSH-1', model: 'DR-HSH006', deviceName: 'Heater', reported: { target_temp: 20 } },
+      transport
+    );
+
+    await heater.setTargetTemperature(22);
+    expect(transport).toHaveBeenCalledTimes(1);
+
+    await expect(heater.setTargetTemperature(50)).rejects.toThrow(DreoCommandError);
+    await expect(heater.setTargetTemperature(50)).rejects.toThrow(/between 5 and 35/);
+    await expect(heater.setTargetTemperature(Number.NaN)).rejects.toThrow(DreoCommandError);
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(heater.getTargetTemperature()).toBe(22);
+
+    await heater.setTargetTemperature(70, 'fahrenheit');
+    expect(transport).toHaveBeenCalledTimes(2);
+    await expect(heater.setTargetTemperature(100, 'fahrenheit')).rejects.toThrow(/between 41 and 95/);
+  });
+});

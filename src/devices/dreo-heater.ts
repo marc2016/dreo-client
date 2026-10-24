@@ -1,5 +1,11 @@
 import { DreoDevice, CommandTransportFn } from './dreo-device.js';
 import { DreoRawDevice, HeaterMode, TemperatureUnit } from '../types/index.js';
+import { DreoCommandError } from '../errors.js';
+
+const TARGET_TEMPERATURE_RANGE: Record<TemperatureUnit, [number, number]> = {
+  celsius: [5, 35],
+  fahrenheit: [41, 95],
+};
 
 export class DreoHeater extends DreoDevice {
   constructor(rawDevice: DreoRawDevice, commandTransport: CommandTransportFn) {
@@ -7,6 +13,12 @@ export class DreoHeater extends DreoDevice {
   }
 
   public async setTargetTemperature(temperature: number, unit: TemperatureUnit = 'celsius'): Promise<any> {
+    const [min, max] = TARGET_TEMPERATURE_RANGE[unit];
+    if (!Number.isFinite(temperature) || temperature < min || temperature > max) {
+      const symbol = unit === 'celsius' ? '°C' : '°F';
+      throw new DreoCommandError(`Target temperature must be between ${min} and ${max} ${symbol}, got ${temperature}.`);
+    }
+
     const fahrenheit = unit === 'fahrenheit' ? temperature : Math.round((temperature * 9) / 5 + 32);
     const celsius = unit === 'celsius' ? temperature : Math.round(((temperature - 32) * 5) / 9);
 

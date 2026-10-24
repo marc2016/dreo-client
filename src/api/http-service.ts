@@ -1,6 +1,6 @@
 import { DREO_API_BASE_URLS, DREO_ENDPOINTS, DREO_CLIENT_CONFIG, DEFAULT_REGION, DEFAULT_TIMEOUT_MS } from '../constants.js';
 import { DreoRegion, DreoAuthResponse, DreoRawDevice } from '../types/index.js';
-import { DreoAuthenticationError, DreoNetworkError, DreoError } from '../errors.js';
+import { DreoAuthenticationError, DreoNetworkError, DreoError, DreoApiError, DreoCommandError } from '../errors.js';
 import { md5 } from '../utils/crypto.js';
 
 export interface HttpServiceOptions {
@@ -72,7 +72,7 @@ export class DreoHttpService {
         headers: {
           'Content-Type': 'application/json; charset=UTF-8',
         },
-      }, false);
+      }, false, false);
     };
 
     let response = await tryAuth(hashedPassword);
@@ -110,7 +110,7 @@ export class DreoHttpService {
       pageSize: '100',
       timestamp: Date.now().toString(),
     });
-    const url = `${this.getBaseUrl()}/api/v2/user-device/device/list?${query.toString()}`;
+    const url = `${this.getBaseUrl()}${DREO_ENDPOINTS.DEVICE_LIST}?${query.toString()}`;
 
     const response = await this.request<{
       code?: number;
@@ -181,13 +181,20 @@ export class DreoHttpService {
       timestamp: Date.now(),
     };
 
-    return this.request(url, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
+    try {
+      return await this.request(url, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+    } catch (err) {
+      if (err instanceof DreoApiError) {
+        throw new DreoCommandError(err.message, err.code);
+      }
+      throw err;
+    }
   }
 
   private ensureAuthenticated(): void {
@@ -196,7 +203,7 @@ export class DreoHttpService {
     }
   }
 
-  private async request<T>(url: string, init: RequestInit, requireAuth = true): Promise<T> {
+  private async request<T>(url: string, init: RequestInit, requireAuth = true, checkCode = true): Promise<T> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -209,7 +216,6 @@ export class DreoHttpService {
     };
 
     if (requireAuth && this.token) {
-      headers['authorization'] = `Bearer ${this.token}`;
       headers['Authorization'] = `Bearer ${this.token}`;
       headers['ua-authorization'] = this.token;
     }
@@ -228,7 +234,19 @@ export class DreoHttpService {
         throw new DreoError(`HTTP request failed with status ${res.status}: ${res.statusText}`);
       }
 
-      return (await res.json()) as T;
+      let body: any;
+      try {
+        body = await res.json();
+      } catch {
+        throw new DreoError(`Invalid response from Dreo Cloud (HTTP ${res.status})`);
+      }
+
+      if (checkCode && body && typeof body === 'object' && typeof body.code === 'number' && body.code !== 0) {
+        const msg = body.msg ?? body.message ?? 'Unknown error';
+        throw new DreoApiError(`Dreo Cloud request failed (code ${body.code}): ${msg}`, body.code);
+      }
+
+      return body as T;
     } catch (err: any) {
       if (err instanceof DreoError) {
         throw err;

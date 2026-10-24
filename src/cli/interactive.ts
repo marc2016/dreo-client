@@ -15,7 +15,26 @@ export interface InteractiveMenuOptions {
   clearSession?: () => boolean;
 }
 
+/** @inquirer/prompts rejects with an ExitPromptError when the user presses Ctrl+C. */
+function isPromptExit(err: unknown): boolean {
+  return err instanceof Error && err.name === 'ExitPromptError';
+}
+
 export async function runInteractiveMenu(options: InteractiveMenuOptions): Promise<void> {
+  try {
+    await runMenuLoop(options);
+  } catch (err) {
+    if (isPromptExit(err)) {
+      console.log('\nTschüss!');
+      return;
+    }
+    throw err;
+  } finally {
+    options.client.close();
+  }
+}
+
+async function runMenuLoop(options: InteractiveMenuOptions): Promise<void> {
   const { client, loadSession, saveSession, clearSession = defaultClearSession } = options;
 
   let session = loadSession();
@@ -307,6 +326,7 @@ async function handleHeaterControl(heater: DreoHeater): Promise<void> {
           break;
       }
     } catch (err: any) {
+      if (isPromptExit(err)) throw err;
       console.error('❌ Fehler beim Ausführen des Befehls:', err.message);
     }
   }
@@ -375,6 +395,7 @@ async function handleFanControl(fan: DreoFan): Promise<void> {
           break;
       }
     } catch (err: any) {
+      if (isPromptExit(err)) throw err;
       console.error('❌ Fehler beim Ausführen des Befehls:', err.message);
     }
   }
@@ -414,6 +435,7 @@ async function handleGenericControl(device: DreoDevice): Promise<void> {
         looping = false;
       }
     } catch (err: any) {
+      if (isPromptExit(err)) throw err;
       console.error('❌ Fehler beim Senden:', err.message);
     }
   }

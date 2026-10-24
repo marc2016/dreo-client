@@ -22,6 +22,13 @@ export class DreoNetworkError extends DreoError {
   }
 }
 
+export class DreoApiError extends DreoError {
+  constructor(message: string, public code?: number | string) {
+    super(message);
+    this.name = 'DreoApiError';
+  }
+}
+
 export class DreoCommandError extends DreoError {
   constructor(message: string, public code?: number | string) {
     super(message);

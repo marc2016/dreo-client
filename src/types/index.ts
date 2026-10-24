@@ -8,6 +8,8 @@ export interface DreoClientOptions {
   autoReconnect?: boolean;
   heartbeatIntervalMs?: number;
   requestTimeoutMs?: number;
+  /** Idle time after which a WebSocket opened only to deliver commands is closed again. Default: 5000 ms. */
+  commandConnectionIdleMs?: number;
 }
 
 export interface DreoUser {

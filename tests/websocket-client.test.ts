@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
+import WebSocket, { WebSocketServer } from 'ws';
 import { DreoWebSocketClient } from '../src/api/websocket-client.js';
 
 class MockWebSocket extends EventEmitter {
@@ -34,6 +35,7 @@ describe('DreoWebSocketClient', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it('establishes connection and handles heartbeat', async () => {
@@ -139,6 +141,111 @@ describe('DreoWebSocketClient', () => {
     await vi.advanceTimersByTimeAsync(1_050);
     expect((client as any).ws).not.toBeNull();
 
+    client.disconnect();
+  });
+});
+
+describe('DreoWebSocketClient against a local server', () => {
+  let wss: WebSocketServer;
+  let urls: string[];
+  let LocalWebSocket: typeof WebSocket;
+
+  beforeEach(async () => {
+    wss = new WebSocketServer({ port: 0 });
+    await new Promise<void>((resolve) => wss.once('listening', () => resolve()));
+    const port = (wss.address() as { port: number }).port;
+    urls = [];
+    const seen = urls;
+    // Redirect every connection to the local server while recording the requested URL
+    LocalWebSocket = class extends WebSocket {
+      constructor(url: string, options?: WebSocket.ClientOptions) {
+        seen.push(url);
+        super(`ws://127.0.0.1:${port}`, options);
+      }
+    } as typeof WebSocket;
+  });
+
+  afterEach(async () => {
+    for (const c of wss.clients) c.terminate();
+    await new Promise<void>((resolve) => wss.close(() => resolve()));
+  });
+
+  const waitFor = async (predicate: () => boolean, timeoutMs = 2000) => {
+    const start = Date.now();
+    while (!predicate()) {
+      if (Date.now() - start > timeoutMs) throw new Error('waitFor timed out');
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  };
+  const openServerClients = () => [...wss.clients].filter((c) => c.readyState === WebSocket.OPEN).length;
+
+  it('ignores the late close of a replaced socket after disconnect + connect', async () => {
+    const client = new DreoWebSocketClient({ token: 't', WebSocketClass: LocalWebSocket });
+    client.on('error', () => {});
+
+    client.connect();
+    await new Promise((r) => client.once('open', r));
+
+    client.disconnect();
+    client.connect();
+    await new Promise((r) => client.once('open', r));
+    // Give the old socket time to deliver its close event
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(client.isConnected()).toBe(true);
+    expect((client as any).heartbeatTimer).not.toBeNull();
+    expect((client as any).reconnectTimer).toBeNull();
+    await waitFor(() => openServerClients() === 1);
+
+    client.disconnect();
+  });
+
+  it('does not reconnect a connection opened with reconnect: false', async () => {
+    const client = new DreoWebSocketClient({ token: 't', reconnectDelayMs: 20, WebSocketClass: LocalWebSocket });
+    client.on('error', () => {});
+
+    client.connect({ reconnect: false });
+    await new Promise((r) => client.once('open', r));
+
+    for (const c of wss.clients) c.close();
+    await waitFor(() => !client.isConnected());
+    await new Promise((r) => setTimeout(r, 150));
+
+    expect((client as any).ws).toBeNull();
+    expect(urls).toHaveLength(1);
+  });
+
+  it('reconnects with the new token when the token changes while connected', async () => {
+    const client = new DreoWebSocketClient({ token: 'old_token', WebSocketClass: LocalWebSocket });
+    client.on('error', () => {});
+
+    client.connect();
+    await new Promise((r) => client.once('open', r));
+
+    client.setToken('new_token');
+    await new Promise((r) => client.once('open', r));
+
+    expect(urls).toHaveLength(2);
+    expect(urls[0]).toContain('accessToken=old_token');
+    expect(urls[1]).toContain('accessToken=new_token');
+    expect(client.isConnected()).toBe(true);
+    await waitFor(() => openServerClients() === 1);
+
+    client.disconnect();
+  });
+
+  it('reconnects to the new regional endpoint when the region changes while connected', async () => {
+    const client = new DreoWebSocketClient({ token: 't', region: 'eu', WebSocketClass: LocalWebSocket });
+    client.on('error', () => {});
+
+    client.connect();
+    await new Promise((r) => client.once('open', r));
+
+    client.setRegion('us');
+    await new Promise((r) => client.once('open', r));
+
+    expect(urls[0]).toContain('wsb-eu.');
+    expect(urls[1]).toContain('wsb-us.');
     client.disconnect();
   });
 });

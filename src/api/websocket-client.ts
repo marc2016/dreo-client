@@ -48,18 +48,31 @@ export class DreoWebSocketClient extends EventEmitter {
   }
 
   public setToken(token: string): void {
+    if (token === this.token) return;
     this.token = token;
+    this.restartIfActive();
   }
 
   public setRegion(region: DreoRegion): void {
+    if (region === this.region) return;
     this.region = region;
+    this.restartIfActive();
+  }
+
+  /** Enables or disables automatic reconnects for the current connection. */
+  public setReconnectEnabled(enabled: boolean): void {
+    this.shouldReconnect = enabled;
+    if (!enabled && this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
   }
 
   public isConnected(): boolean {
     return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
   }
 
-  public connect(): void {
+  public connect(options: { reconnect?: boolean } = {}): void {
     if (this.isConnected() || this.isConnecting) {
       return;
     }
@@ -68,7 +81,7 @@ export class DreoWebSocketClient extends EventEmitter {
       throw new DreoError('Cannot connect WebSocket: token is missing. Please authenticate first.');
     }
 
-    this.shouldReconnect = this.autoReconnect;
+    this.shouldReconnect = options.reconnect ?? this.autoReconnect;
     this.isConnecting = true;
 
     const baseUrl = DREO_WS_BASE_URLS[this.region] ?? DREO_WS_BASE_URLS.eu;
@@ -76,14 +89,15 @@ export class DreoWebSocketClient extends EventEmitter {
     const url = `${baseUrl}?accessToken=${encodeURIComponent(this.token)}&timestamp=${timestamp}`;
 
     try {
-      this.ws = new this.WebSocketClass(url, {
+      const socket = new this.WebSocketClass(url, {
         headers: {
           'User-Agent': DREO_CLIENT_CONFIG.USER_AGENT,
           ua: DREO_CLIENT_CONFIG.UA,
         },
       });
+      this.ws = socket;
 
-      this.setupSocketListeners();
+      this.setupSocketListeners(socket);
     } catch (err: any) {
       this.isConnecting = false;
       this.emit('error', err);
@@ -96,12 +110,14 @@ export class DreoWebSocketClient extends EventEmitter {
     this.clearTimers();
 
     if (this.ws) {
+      // Detach first so the late close event of this socket is ignored
+      const socket = this.ws;
+      this.ws = null;
       try {
-        this.ws.close();
+        socket.close();
       } catch {
         // ignore
       }
-      this.ws = null;
     }
     this.isConnecting = false;
   }
@@ -130,25 +146,38 @@ export class DreoWebSocketClient extends EventEmitter {
     });
   }
 
-  private setupSocketListeners(): void {
+  private restartIfActive(): void {
     if (!this.ws) return;
+    const reconnect = this.shouldReconnect;
+    this.disconnect();
+    this.connect({ reconnect });
+  }
 
-    this.ws.on('open', () => {
+  private setupSocketListeners(socket: WebSocket): void {
+    // Events from a socket that has been replaced or detached must not touch the current connection
+    const isCurrent = () => this.ws === socket;
+
+    socket.on('open', () => {
+      if (!isCurrent()) return;
       this.isConnecting = false;
       this.currentReconnectDelay = this.reconnectDelayMs;
       this.startHeartbeat();
       this.emit('open');
     });
 
-    this.ws.on('message', (data: WebSocket.RawData) => {
+    socket.on('message', (data: WebSocket.RawData) => {
+      if (!isCurrent()) return;
       this.handleIncomingMessage(data);
     });
 
-    this.ws.on('error', (err: Error) => {
+    // Listener stays attached for stale sockets too, otherwise ws throws on unhandled errors
+    socket.on('error', (err: Error) => {
+      if (!isCurrent()) return;
       this.emit('error', err);
     });
 
-    this.ws.on('close', (code: number, reason: Buffer) => {
+    socket.on('close', (code: number, reason: Buffer) => {
+      if (!isCurrent()) return;
       this.isConnecting = false;
       this.clearTimers();
       this.ws = null;
@@ -159,7 +188,7 @@ export class DreoWebSocketClient extends EventEmitter {
       }
     });
 
-    this.ws.on('pong', () => {
+    socket.on('pong', () => {
       // Received pong frame from server
     });
   }
@@ -212,6 +241,7 @@ export class DreoWebSocketClient extends EventEmitter {
         }
       }
     }, this.heartbeatIntervalMs);
+    this.heartbeatTimer.unref?.();
   }
 
   private scheduleReconnect(): void {
@@ -227,6 +257,7 @@ export class DreoWebSocketClient extends EventEmitter {
         this.connect();
       }
     }, delay);
+    this.reconnectTimer.unref?.();
   }
 
   private clearTimers(): void {
