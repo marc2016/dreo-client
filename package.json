@@ -23,14 +23,16 @@
   },
   "files": [
     "dist",
-    "bin"
+    "bin",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsup",
     "watch": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run test && npm run build"
   },
   "keywords": [
     "dreo",
@@ -44,6 +46,14 @@
   ],
   "author": "Marc Lammers",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marc2016/dreo-client.git"
+  },
+  "bugs": {
+    "url": "https://github.com/marc2016/dreo-client/issues"
+  },
+  "homepage": "https://github.com/marc2016/dreo-client#readme",
   "engines": {
     "node": ">=20.0.0"
   },
